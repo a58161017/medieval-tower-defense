@@ -1,6 +1,6 @@
 """中世紀守塔 (Kingdom Defense) as an MCP server, so an AI streamer can play game.html.
 
-The game runs unmodified in a real Microsoft Edge window (app mode, so OBS can capture it by
+The game runs unmodified in a real Edge window (app mode, so OBS can capture it by
 title) driven through Playwright. The page already exposes everything needed: the game's own
 globals (state, towers, LEVELS, placeTower, startWave, useSkill ...) and the helpers of its
 built-in OllamaAI player (summarizeEnemies, getBuildableSpotsNearPath).
@@ -28,6 +28,12 @@ HERE = Path(__file__).resolve().parent
 GAME = Path(os.environ.get("TD_GAME", HERE.parent / "game.html")).resolve()
 PROFILE = Path(os.environ.get("TD_PROFILE", HERE / "profile"))
 HEADLESS = os.environ.get("TD_HEADLESS", "0") == "1"
+# the installed Edge by default (Playwright's own Chromium: TD_BROWSER=chromium)
+BROWSER = os.environ.get("TD_BROWSER", "msedge")
+# TD_AUDIO_DEVICE="CABLE Input": play the game's sound on the output device whose name contains
+# this (e.g. a VB-CABLE nobody listens to, which OBS captures), not on the host's speakers.
+# Only this page's Web Audio is moved; other Edge tabs keep playing normally.
+AUDIO_DEVICE = os.environ.get("TD_AUDIO_DEVICE", "").strip()
 WINDOW = (1480, 1000)
 WATCH_MAX_S = 20
 TOWER_LETTER = {"archer": "A", "ice": "I", "cannon": "C", "magic": "M", "poison": "P", "lightning": "L", "support": "S"}
@@ -130,6 +136,33 @@ ACTION_JS = """([action, a]) => {
 }"""
 
 
+ROUTE_AUDIO_JS = """(() => {
+  // Every AudioContext the game makes plays on the output device whose name contains __DEVICE__.
+  // window.__audioRoute says what happened: "<device name>", "not found: ..." or "error: ...".
+  const want = __DEVICE__;
+  const Base = window.AudioContext;
+  async function route(ctx) {
+    try {
+      let devices = await navigator.mediaDevices.enumerateDevices();
+      if (!devices.some(d => d.label)) {          // names are hidden until the mic permission is granted
+        const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+        s.getTracks().forEach(t => t.stop());
+        devices = await navigator.mediaDevices.enumerateDevices();
+      }
+      // real devices only, not Chromium's "default" / "communications" aliases
+      const outs = devices.filter(d => d.kind === 'audiooutput' && !['default', 'communications'].includes(d.deviceId));
+      const dev = outs.find(d => d.label.includes(want));
+      if (!dev) { window.__audioRoute = 'not found: ' + outs.map(d => d.label).join(' | '); return; }
+      await ctx.setSinkId(dev.deviceId);
+      window.__audioRoute = dev.label;
+    } catch (e) { window.__audioRoute = 'error: ' + e; }
+  }
+  window.AudioContext = window.webkitAudioContext = class extends Base {
+    constructor(...a) { super(...a); route(this); }
+  };
+})();"""
+
+
 async def _open_page():
     pw = await async_playwright().start()
     url = GAME.as_uri()
@@ -139,11 +172,18 @@ async def _open_page():
             "--disable-background-timer-throttling"]
     if not HEADLESS:
         args.append(f"--app={url}")   # no tabs/address bar; window title = the page title (OBS matches it)
+    if AUDIO_DEVICE:
+        args.append("--use-fake-ui-for-media-stream")   # device names need the mic permission: no prompt
     PROFILE.mkdir(parents=True, exist_ok=True)
-    ctx = await pw.chromium.launch_persistent_context(str(PROFILE), channel="msedge", headless=HEADLESS,
-                                                      no_viewport=True, args=args)
+    channel = {} if BROWSER == "chromium" else {"channel": BROWSER}
+    ctx = await pw.chromium.launch_persistent_context(str(PROFILE), headless=HEADLESS, no_viewport=True,
+                                                      args=args, **channel)
     page = ctx.pages[0] if ctx.pages else await ctx.new_page()
-    if not page.url.startswith("file:"):
+    if AUDIO_DEVICE:
+        # must run before the game creates its AudioContext: add it, then (re)load the game
+        await ctx.add_init_script(ROUTE_AUDIO_JS.replace("__DEVICE__", json.dumps(AUDIO_DEVICE)))
+        await page.goto(url)
+    elif not page.url.startswith("file:"):
         await page.goto(url)
     await page.wait_for_load_state("load")
     await page.wait_for_function("typeof LEVELS !== 'undefined' && typeof OllamaAI !== 'undefined'")

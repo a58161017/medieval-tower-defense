@@ -35,3 +35,5 @@ uv run python -m agent_stream.launch medieval-tower-defense
 | `TD_HEADLESS=1` | 不顯示視窗（測試用） |
 | `TD_PROFILE` | 瀏覽器設定檔的位置（預設 `profile/`） |
 | `TD_GAME` | 遊戲檔案的路徑（預設 `../game.html`） |
+| `TD_AUDIO_DEVICE` | 遊戲頁面的聲音改從名稱含這段文字的播放裝置出來，例如 `CABLE Input`（VB-CABLE 虛擬音效線）。只影響遊戲頁面，你其他的 Edge 分頁照常。找不到這個裝置時照常從預設喇叭出來 |
+| `TD_BROWSER` | 預設 `msedge`（已安裝的 Edge）。`chromium` 改用 Playwright 自帶的 Chromium（這台電腦上跑不起來） |
