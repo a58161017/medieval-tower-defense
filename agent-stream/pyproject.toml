@@ -1,0 +1,9 @@
+[project]
+name = "kingdom-defense-mcp"
+version = "0.1.0"
+description = "MCP server that lets an AI streamer play 中世紀守塔 (game.html) through a real Edge window"
+requires-python = ">=3.10"
+dependencies = ["mcp[cli]>=2.2,<3", "playwright>=1.48"]
+
+[dependency-groups]
+dev = ["pytest>=8"]
